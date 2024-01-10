@@ -7,6 +7,7 @@ import {
   aws_efs as efs,
   aws_lambda as lambda,
   aws_certificatemanager as acm,
+  aws_apigateway as apigateway,
   aws_elasticache as elasticache,
   aws_rds as rds,
   aws_s3 as s3,
@@ -19,6 +20,7 @@ import {
   CfnResource,
   custom_resources as cr,
 } from "aws-cdk-lib";
+
 import { InstanceType } from "aws-cdk-lib/aws-ec2";
 import { Construct } from "constructs";
 import * as path from "path";
@@ -183,7 +185,7 @@ export class WooCommerceStack extends Stack {
     const wcFunction = new lambda.DockerImageFunction(this, "woocommerce", {
       architecture: lambda.Architecture.X86_64,
       code: lambda.DockerImageCode.fromImageAsset(
-        path.join(__dirname, "..", "..", "src"), 
+        path.join(__dirname, "..", "..", "src"),
         {
           buildArgs: {
             'DISABLE_OPCACHE_PRE_COMPILATION': this.node.tryGetContext("DISABLE_OPCACHE_PRE_COMPILATION")
@@ -240,12 +242,35 @@ export class WooCommerceStack extends Stack {
       },
     });
 
-    // Lambda Alias
-    const liveAlias = wcFunction.addAlias("live");
-    // Add Lambda Function URL to this alias
-    const wcFUrl = liveAlias.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
+    // // Lambda Alias
+    // const liveAlias = wcFunction.addAlias("live");
+    // // Add Lambda Function URL to this alias
+    // const wcFUrl = liveAlias.addFunctionUrl({
+    //   authType: lambda.FunctionUrlAuthType.NONE,
+    // });
+
+    // apigateway 
+    const api = new apigateway.RestApi(this, 'MyApi', {
+      restApiName: 'MyServiceApi',
+      description: 'API for My Service',
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS
+      }
+
     });
+
+    const proxyResource = api.root.addResource('{proxy+}');
+    const lambdaIntegration = new apigateway.LambdaIntegration(wcFunction, {
+      proxy: true
+    });
+    proxyResource.addMethod('ANY', lambdaIntegration, {
+      authorizationType: apigateway.AuthorizationType.NONE
+    });
+    api.root.addMethod('ANY', lambdaIntegration, {})
+
+    const wcFUrl = api
+
 
     // Grant Lambda read/write access to the s3 bucket
     wcBucket.grantReadWrite(wcFunction);
@@ -340,6 +365,7 @@ export class WooCommerceStack extends Stack {
       comment: "Distribution for " + this.stackName,
       defaultBehavior: {
         origin: new origins.HttpOrigin(apiDomain, {
+          originPath: "/prod",
           readTimeout: Duration.seconds(60),
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
